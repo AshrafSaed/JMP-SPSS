@@ -197,7 +197,9 @@ columns: list of repeated-measure columns (wide format; one row per subject).
 One-way MANOVA: Wilks/Pillai/Hotelling-Lawley/Roy + canonical plot  [JMP Fit Model MANOVA | SPSS GLM Multivariate]
 
 ```
-responses: list; factor: one grouping column.  Wilks, Pillai, Hotelling-Lawley, Roy + univariate ANOVAs.
+responses: list; factor: one grouping column  -OR-  factors: list (+ optional covariates, degree) for multi-
+factor / MANCOVA Type III tests.
+Wilks, Pillai, Hotelling-Lawley, Roy + univariate ANOVAs.
 ```
 
 ### `agreement`
@@ -358,11 +360,11 @@ responses (list) ; predictors; max_components; cv folds.
 ```
 
 ### `timeseries`
-ACF/PACF, decomposition, Holt-Winters, ARIMA, auto-ARIMA, forecast  [JMP Time Series | SPSS Forecasting]
+ACF/PACF, decomposition, Holt-Winters, exact-ML SARIMA, auto-ARIMA, forecast  [JMP Time Series | SPSS Forecasting]
 
 ```
-column; mode: explore|decompose|smooth|arima|auto_arima; period (m); horizon; p,d,q,D; trend (bool), seasonal
-add|mul|none (smooth).
+column; mode: explore|decompose|smooth|arima|auto_arima; period (m); horizon; p,d,q and seasonal P,D,Q
+(arima); method ml (exact Kalman ML, default) | css; trend (bool), seasonal add|mul|none (smooth).
 ```
 
 ## Advanced SPC & MSA  (`ss_spc2.py`)
@@ -455,7 +457,8 @@ plan; optional lot_size N for AOQ/ATI.
 Cox proportional hazards (Efron/Breslow), HR, PH check  [JMP Proportional Hazards | SPSS Cox Regression]
 
 ```
-time, event, covariates (list); categorical (list; default non-numeric); ties efron|breslow.
+time, event, covariates (list); categorical (list; default non-numeric); ties efron|breslow; ph_time
+km|rank|log|identity (time transform g(t) for the PH test).
 ```
 
 ### `repairable`
@@ -500,13 +503,14 @@ Weibayes zero-failure test duration; optional n units.
 ## Advanced DOE  (`ss_doe2.py`)
 
 ### `doe_design2` - **no data file needed**
-Plackett-Burman, DSD, D-optimal, Taguchi, mixture, Latin square designs  [JMP DOE]
+Plackett-Burman, DSD, D-optimal, Taguchi, mixture, Latin square, split-plot designs  [JMP DOE]
 
 ```
-type: plackett_burman | dsd | d_optimal | taguchi | mixture | latin_square.
-factors {name:[low,high]} (not for
-mixture/latin/taguchi labels); extra: runs (PB N / d_optimal n), model (main|interaction|quadratic), array
-(taguchi), components + degree/centroid (mixture), size (latin_square), seed, randomize.
+type: plackett_burman | dsd | d_optimal | taguchi | mixture | latin_square | split_plot (whole_plot_factors,
+subplot_factors, whole_plot_reps).
+factors {name:[low,high]} (not for mixture/latin/taguchi labels); extra:
+runs (PB N / d_optimal n), model (main|interaction|quadratic), array (taguchi), components + degree/centroid
+(mixture), size (latin_square), seed, randomize.
 ```
 
 ### `doe_augment`

@@ -8,6 +8,7 @@
 | Orthogonal arrays | `type`: `taguchi` (`levels` 2/3, optional `array` L4/L8/L16/L32/L9/L27) | GF(p) construction; every column pair balanced. Interactions are confounded - main-effects only. |
 | Formulations | `type`: `mixture` (`components`, `degree` or `centroid`, `lower`) | Simplex-lattice/centroid (+ overall centroid). |
 | Blocking in two directions | `type`: `latin_square` | Randomized. |
+| Hard-to-change factors | `type`: `split_plot` (`whole_plot_factors`, `subplot_factors`, `whole_plot_reps`) | 2-level full factorial in both strata; whole plots randomized, sub-plot runs randomized within each. Analyse with `split_plot`. Fractional / split-split-plot designs not implemented. |
 | Add runs to an existing design | `doe_augment` (`foldover` all/one factor, `axial`, `center`) | Needs the `*_coded` columns of the original design CSV. Block column added. |
 | Detectable effect / runs | `doe_power` (no data) | Noncentral-t power, effect = high−low mean; verified by Monte-Carlo. |
 | Taguchi analysis | `taguchi_analyze` (`sn` larger/smaller/nominal) | S/N response table, ANOVA on S/N, additive optimum - confirm by a run. |

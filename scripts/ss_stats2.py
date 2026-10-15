@@ -330,28 +330,64 @@ def rm_anova(df, params, L: Lang, outdir):
 # ============================================================================
 # MANOVA
 # ============================================================================
-def manova(df, params, L: Lang, outdir):
-    """responses: list; factor: one grouping column.  Wilks, Pillai, Hotelling-Lawley, Roy + univariate ANOVAs."""
-    ys, g = params["responses"], params["factor"]
-    d = df[ys + [g]].dropna(); lv = sorted(d[g].unique(), key=str); p = len(ys); q = len(lv) - 1; N = len(d); v = N - len(lv)
-    Y = d[ys].values; gm = Y.mean(0); E = np.zeros((p, p)); H = np.zeros((p, p))
-    for l in lv:
-        Yg = Y[(d[g] == l).values]; m = Yg.mean(0); E += (Yg - m).T @ (Yg - m); H += len(Yg) * np.outer(m - gm, m - gm)
+def _mv_rows(H, E, q, v):
+    """Wilks / Pillai / Hotelling-Lawley / Roy with the usual F approximations. q = hypothesis df, v = error df."""
+    p = E.shape[0]
     lam = np.sort(np.real(np.linalg.eigvals(np.linalg.solve(E, H))))[::-1]; lam = np.clip(lam, 0, None)
     Wl = float(np.prod(1 / (1 + lam))); V = float(np.sum(lam / (1 + lam))); U = float(lam.sum()); R = float(lam[0])
     s = min(p, q); m_ = (abs(p - q) - 1) / 2; n_ = (v - p - 1) / 2
     den = p * p + q * q - 5; t = math.sqrt((p * p * q * q - 4) / den) if den > 0 else 1.0
     mm = v - (p - q + 1) / 2; d1w = p * q; d2w = mm * t - (p * q - 2) / 2
     Fw = (1 - Wl ** (1 / t)) / Wl ** (1 / t) * d2w / d1w
-    d1p, d2p = s * (2 * m_ + s + 1), s * (2 * n_ + s + 1); Fp = (2 * n_ + s + 1) / (2 * m_ + s + 1) * V / (s - V)
+    d1p, d2p = s * (2 * m_ + s + 1), s * (2 * n_ + s + 1); Fp = (2 * n_ + s + 1) / (2 * m_ + s + 1) * V / (s - V) if s > V else np.inf
     d1h, d2h = s * (2 * m_ + s + 1), 2 * (s * n_ + 1); Fh = 2 * (s * n_ + 1) * U / (s * s * (2 * m_ + s + 1))
     dm = max(p, q); d2r = v - dm + q; Fr = R * d2r / dm
+    return [{"Test": "Wilks' Lambda", "Value": Wl, "F": Fw, "Num DF": d1w, "Den DF": d2w, "Prob > F": stats.f.sf(Fw, d1w, d2w)},
+            {"Test": "Pillai's Trace", "Value": V, "F": Fp, "Num DF": d1p, "Den DF": d2p, "Prob > F": stats.f.sf(Fp, d1p, d2p)},
+            {"Test": "Hotelling-Lawley Trace", "Value": U, "F": Fh, "Num DF": d1h, "Den DF": d2h, "Prob > F": stats.f.sf(Fh, d1h, d2h)},
+            {"Test": "Roy's Largest Root (upper bound)", "Value": R, "F": Fr, "Num DF": dm, "Den DF": d2r, "Prob > F": stats.f.sf(Fr, dm, d2r)}]
+
+
+def _manova_glm(df, params, L: Lang, outdir):
+    """Multi-factor / covariate MANOVA: Y = X B + E, Type III multivariate tests of every model term (effect coding, as JMP/SPSS)."""
+    from ss_linear import OLS
+    ys, fa = params["responses"], list(params["factors"]); cv = list(params.get("covariates") or [])
+    d = df[ys + fa + cv].dropna().reset_index(drop=True); deg = int(params.get("degree", min(len(fa) + len(cv), 3)))
+    o = OLS(d, ys[0], factors=fa, covariates=cv, degree=deg); X = o.X; Y = d[ys].values.astype(float); n, p = Y.shape
+    XtXi = np.linalg.pinv(X.T @ X); B = XtXi @ X.T @ Y; Rm = Y - X @ B; E = Rm.T @ Rm; v = n - np.linalg.matrix_rank(X)
+    res = Result(L.t("MANOVA")); allrows = []; summ = {}
+    for t, idx in o.term_idx.items():
+        Lb = B[idx]; C = XtXi[np.ix_(idx, idx)]; q = int(np.linalg.matrix_rank(X) - np.linalg.matrix_rank(np.delete(X, idx, axis=1)))
+        H = Lb.T @ np.linalg.solve(C, Lb)
+        for r in _mv_rows(H, E, max(q, 1), v): r["Effect"] = "*".join(t); allrows.append(r)
+        summ["*".join(t)] = {"wilks_p": [r["Prob > F"] for r in allrows if r["Effect"] == "*".join(t) and r["Test"].startswith("Wilks")][0]}
+    tab = pd.DataFrame(allrows)[["Effect", "Test", "Value", "F", "Num DF", "Den DF", "Prob > F"]]
+    res.table("Multivariate tests (Type III, per effect)", tab)
+    un = []
+    for c in ys:
+        oc = OLS(d, c, factors=fa, covariates=cv, degree=deg).ss3()
+        for _, r in oc.iterrows(): un.append({"Response": c, "Effect": r["Source"], "DF": r["DF"], "F": r["F Ratio"], "Prob > F": r["Prob > F"]})
+    res.table("Univariate Type III ANOVAs", pd.DataFrame(un))
+    res.table("Error SSCP -> residual correlation", pd.DataFrame(np.corrcoef(Rm.T), index=ys, columns=ys).reset_index().rename(columns={"index": ""}))
+    fig, ax = plt.subplots(figsize=(5.4, 3.6)); effs = list(o.term_idx); pw = [summ["*".join(t)]["wilks_p"] for t in effs]
+    ax.barh(["*".join(t) for t in effs], [-math.log10(max(x, 1e-16)) for x in pw], color=PALETTE[0]); ax.axvline(-math.log10(.05), color=PALETTE[3], ls="--"); ax.set_xlabel("-log10(p), Wilks"); ax.set_title(L.fig("MANOVA"))
+    res.fig("effects", save_fig(fig, outdir, "manova_effects")); res.summary.update({"effects": summ, "error_df": int(v)})
+    res.note("Type III multivariate tests with effect (sum-to-zero) coding. Each effect's hypothesis SSCP H = (LB)'(L(X'X)^-L')^-1(LB); Wilks/Pillai/Hotelling-Lawley F use the standard approximations; Roy's F is an upper bound.")
+    return res
+
+
+def manova(df, params, L: Lang, outdir):
+    """responses: list; factor: one grouping column  -OR-  factors: list (+ optional covariates, degree) for multi-factor / MANCOVA Type III tests.
+    Wilks, Pillai, Hotelling-Lawley, Roy + univariate ANOVAs."""
+    if params.get("factors") or params.get("covariates"): return _manova_glm(df, params, L, outdir)
+    ys, g = params["responses"], params["factor"]
+    d = df[ys + [g]].dropna(); lv = sorted(d[g].unique(), key=str); p = len(ys); q = len(lv) - 1; N = len(d); v = N - len(lv)
+    Y = d[ys].values; gm = Y.mean(0); E = np.zeros((p, p)); H = np.zeros((p, p))
+    for l in lv:
+        Yg = Y[(d[g] == l).values]; m = Yg.mean(0); E += (Yg - m).T @ (Yg - m); H += len(Yg) * np.outer(m - gm, m - gm)
+    rows = _mv_rows(H, E, q, v); Wl, V = rows[0]["Value"], rows[1]["Value"]; Fw, d1w, d2w = rows[0]["F"], rows[0]["Num DF"], rows[0]["Den DF"]
     res = Result(L.t("MANOVA"))
-    res.table("Multivariate tests", pd.DataFrame([
-        {"Test": "Wilks' Lambda", "Value": Wl, "F": Fw, "Num DF": d1w, "Den DF": d2w, "Prob > F": stats.f.sf(Fw, d1w, d2w)},
-        {"Test": "Pillai's Trace", "Value": V, "F": Fp, "Num DF": d1p, "Den DF": d2p, "Prob > F": stats.f.sf(Fp, d1p, d2p)},
-        {"Test": "Hotelling-Lawley Trace", "Value": U, "F": Fh, "Num DF": d1h, "Den DF": d2h, "Prob > F": stats.f.sf(Fh, d1h, d2h)},
-        {"Test": "Roy's Largest Root (upper bound)", "Value": R, "F": Fr, "Num DF": dm, "Den DF": d2r, "Prob > F": stats.f.sf(Fr, dm, d2r)}]))
+    res.table("Multivariate tests", pd.DataFrame(rows))
     un = []
     for c in ys:
         r = stats.f_oneway(*[d.loc[d[g] == l, c] for l in lv]); un.append({"Response": c, "F": r.statistic, "Prob > F": r.pvalue})

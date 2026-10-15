@@ -52,8 +52,33 @@ def cox_fit(X, t, e, ties="efron", tol=1e-9, maxit=50):
     return b, cov, ll, ll0, score0
 
 
+def schoenfeld_test(Xv, t, e, beta, cov, transform="km"):
+    """Grambsch-Therneau (1994) test of proportional hazards.  Per covariate: T_k = (sum (g_j-gbar) s*_jk)^2 / (d V_kk sum (g_j-gbar)^2),
+    global: T = d/c * w' V w, w = sum (g_j-gbar) s_j, c = sum (g_j-gbar)^2.  s_j = x_j - weighted risk-set mean (Breslow-type)."""
+    eta = Xv @ beta; w = np.exp(eta - eta.max()); evs = np.where(e == 1)[0]; d = len(evs)
+    if d < 6: return None
+    S = np.empty((d, Xv.shape[1])); tt = t[evs]
+    for r_, i in enumerate(evs):
+        R = t >= t[i]; S[r_] = Xv[i] - (w[R, None] * Xv[R]).sum(0) / w[R].sum()
+    o = np.argsort(tt, kind="stable"); tt, S = tt[o], S[o]
+    if transform == "km":
+        ut = np.unique(t[e == 1]); surv = 1.0; sv = {}
+        for u in ut:
+            surv *= 1 - ((t == u) & (e == 1)).sum() / (t >= u).sum(); sv[u] = surv
+        g = np.array([1 - sv[u] for u in tt])
+    elif transform == "rank": g = stats.rankdata(tt)
+    elif transform == "log": g = np.log(tt)
+    else: g = tt.astype(float)
+    gc = g - g.mean(); c = float(gc @ gc)
+    if c <= 0: return None
+    sstar = beta + d * (S @ cov); wv = gc @ S; chi2 = (gc @ (d * (S @ cov))) ** 2 / (d * np.diag(cov) * c)
+    glob = float(d / c * wv @ cov @ wv)
+    rho = [float(np.corrcoef(g, sstar[:, j])[0, 1]) if sstar[:, j].std() > 0 else np.nan for j in range(Xv.shape[1])]
+    return dict(chi2=chi2, p=stats.chi2.sf(chi2, 1), chi2_global=glob, p_global=float(stats.chi2.sf(glob, Xv.shape[1])), rho=rho, g=g, sstar=sstar)
+
+
 def cox_ph(df, params, L: Lang, outdir):
-    """time, event, covariates (list); categorical (list; default non-numeric); ties efron|breslow."""
+    """time, event, covariates (list); categorical (list; default non-numeric); ties efron|breslow; ph_time km|rank|log|identity (time transform g(t) for the PH test)."""
     tc, ec, xs = params["time"], params["event"], params["covariates"]; d = df[[tc, ec] + xs].dropna(); d = d[d[tc] > 0]
     cat = params.get("categorical") or [c for c in xs if not pd.api.types.is_numeric_dtype(d[c])]; X = pd.get_dummies(d[xs], columns=cat, drop_first=True, dtype=float); t = d[tc].values.astype(float); e = d[ec].values.astype(int)
     ties = params.get("ties", "efron"); b, cov, ll, ll0, score = cox_fit(X.values, t, e, ties); se = np.sqrt(np.diag(cov)); z = b / se; p = len(b)
@@ -66,24 +91,26 @@ def cox_ph(df, params, L: Lang, outdir):
         m = t > t[i]; conc += (eta[m] < eta[i]).sum(); disc += (eta[m] > eta[i]).sum(); tie += (eta[m] == eta[i]).sum()
     cidx = (conc + .5 * tie) / max(conc + disc + tie, 1)
     res.table("Model tests", pd.DataFrame([{"Ties": ties, "n": len(d), "Events": int(e.sum()), "LogLik (model)": ll, "LogLik (null)": ll0, "LR chi-square": lr, "LR p": stats.chi2.sf(lr, p), "Wald chi-square": wald, "Wald p": stats.chi2.sf(wald, p), "Score chi-square": score, "Score p": stats.chi2.sf(score, p), "Concordance": cidx, "AIC": -2 * ll + 2 * p}]))
-    # Schoenfeld residual check (unscaled; correlation with rank of event time)
-    ev_t = np.unique(t[e == 1]); rows = []; sch = []
-    w = np.exp(eta - eta.max())
-    for u in ev_t:
-        R = t >= u; D = np.where((t == u) & (e == 1))[0]; xbar = (w[R, None] * X.values[R]).sum(0) / w[R].sum()
-        for i in D: sch.append((u, X.values[i] - xbar))
-    if len(sch) > 5:
-        tt = np.array([s[0] for s in sch]); S_ = np.array([s[1] for s in sch]); rk = stats.rankdata(tt)
-        for j, nm in enumerate(X.columns):
-            r_, pv = stats.spearmanr(rk, S_[:, j]) if S_[:, j].std() > 0 else (np.nan, np.nan); rows.append({"Term": nm, "Spearman r (Schoenfeld vs time rank)": r_, "p-value": pv, "PH assumption": "questionable" if pv < .05 else "no evidence against"})
-        res.table("Proportional-hazards check (approximate)", pd.DataFrame(rows))
+    # Grambsch-Therneau test of proportional hazards (scaled Schoenfeld residuals vs g(time))
+    zph = schoenfeld_test(X.values, t, e, b, cov, params.get("ph_time", "km"))
+    if zph is not None:
+        rows = [{"Term": nm, "rho (scaled residual vs g(t))": zph["rho"][j], "chi-square": zph["chi2"][j], "df": 1, "p-value": zph["p"][j], "PH assumption": "questionable" if zph["p"][j] < .05 else "no evidence against"} for j, nm in enumerate(X.columns)]
+        rows.append({"Term": "GLOBAL", "rho (scaled residual vs g(t))": np.nan, "chi-square": zph["chi2_global"], "df": len(b), "p-value": zph["p_global"], "PH assumption": "questionable" if zph["p_global"] < .05 else "no evidence against"})
+        res.table("Proportional-hazards test (Grambsch-Therneau)", pd.DataFrame(rows))
+        kk = min(len(b), 6); figz, axz = plt.subplots(1, kk, figsize=(3.6 * kk, 3.4), squeeze=False)
+        for j in range(kk):
+            a_ = axz[0, j]; a_.scatter(zph["g"], zph["sstar"][:, j], s=8, alpha=.5); a_.axhline(b[j], color=PALETTE[3], ls="--", lw=1)
+            if np.ptp(zph["g"]) > 0: c_ = np.polyfit(zph["g"], zph["sstar"][:, j], 1); xx_ = np.array([zph["g"].min(), zph["g"].max()]); a_.plot(xx_, np.polyval(c_, xx_), color=PALETTE[1])
+            a_.set_title(f"{X.columns[j]}  p={zph['p'][j]:.3f}", fontsize=9); a_.set_xlabel("g(t)"); a_.set_ylabel("scaled Schoenfeld")
+        res.fig("PH check", save_fig(figz, outdir, "cox_ph_check")); res.summary["ph_global_p"] = float(zph["p_global"]); res.summary["ph_p"] = {k: float(v) for k, v in zip(X.columns, zph["p"])}
+    ev_t = np.unique(t[e == 1]); w = np.exp(eta - eta.max())
     # Breslow baseline
     H0 = np.array([(( (t == u) & (e == 1)).sum()) / w[t >= u].sum() for u in ev_t]); Hc = np.cumsum(H0)
     xm = X.values.mean(0); S0 = np.exp(-Hc * math.exp((xm @ b) - eta.max()))
     fig, axs = plt.subplots(1, 2, figsize=(11, 4)); yy = np.arange(len(b)); axs[0].errorbar(np.exp(b), yy, xerr=[np.exp(b) - np.exp(b - 1.96 * se), np.exp(b + 1.96 * se) - np.exp(b)], fmt="o", color=PALETTE[0], capsize=3); axs[0].axvline(1, color=PALETTE[3], ls="--"); axs[0].set_xscale("log"); axs[0].xaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter()); axs[0].xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter()); axs[0].set_yticks(yy); axs[0].set_yticklabels(X.columns); axs[0].set_title(L.fig("Hazard ratio"))
     axs[1].step(np.concatenate([[0], ev_t]), np.concatenate([[1], S0]), where="post", color=PALETTE[0]); axs[1].set_title("Baseline survival at mean covariates"); axs[1].set_ylim(0, 1.02); res.fig("Cox", save_fig(fig, outdir, "cox"))
     res.summary.update({"coef": {k: float(v) for k, v in zip(X.columns, b)}, "hr": {k: float(math.exp(v)) for k, v in zip(X.columns, b)}, "score_chi2": score, "concordance": float(cidx)})
-    res.note("Efron tie handling by default (as R/SPSS-compatible Breslow vs Efron may differ slightly). PH check is the simple unscaled-Schoenfeld rank correlation, not the full Grambsch-Therneau test.")
+    res.note("Efron tie handling by default (as R/SPSS-compatible Breslow vs Efron may differ slightly). PH test: Grambsch-Therneau score test on scaled Schoenfeld residuals vs g(t) (default Kaplan-Meier transform); residuals use Breslow-type risk-set means, so with many tied event times they differ slightly from R's cox.zph under Efron ties.")
     return res
 
 

@@ -125,7 +125,7 @@ def _design_fig(out, cols, outdir, name, block=None, title="Design points"):
 
 
 def make_design2(df, params, L: Lang, outdir):
-    """type: plackett_burman | dsd | d_optimal | taguchi | mixture | latin_square.
+    """type: plackett_burman | dsd | d_optimal | taguchi | mixture | latin_square | split_plot (whole_plot_factors, subplot_factors, whole_plot_reps).
     factors {name:[low,high]} (not for mixture/latin/taguchi labels); extra: runs (PB N / d_optimal n), model (main|interaction|quadratic), array (taguchi), components + degree/centroid (mixture), size (latin_square), seed, randomize."""
     typ = params.get("type", "dsd"); rng = np.random.default_rng(int(params.get("seed", 1))); res = Result("DOE - " + typ); fac = params.get("factors", {}); names = list(fac)
     if typ == "plackett_burman":
@@ -163,8 +163,20 @@ def make_design2(df, params, L: Lang, outdir):
     elif typ == "latin_square":
         n = int(params.get("size", 4)); base = (np.add.outer(range(n), range(n)) % n); r = rng.permutation(n); c = rng.permutation(n); s = rng.permutation(n); LS = s[base[np.ix_(r, c)]]
         out = pd.DataFrame([{"Row (blocking 1)": i + 1, "Column (blocking 2)": j + 1, "Treatment": string.ascii_uppercase[LS[i, j]]} for i in range(n) for j in range(n)]); res.note("Randomized Latin square: each treatment appears once per row and column. Assumes no row x column x treatment interactions."); res.summary["runs"] = n * n
-    else: raise ValueError("type must be plackett_burman|dsd|d_optimal|taguchi|mixture|latin_square")
-    if typ not in ("latin_square", "taguchi", "mixture") and params.get("randomize", True):
+    elif typ == "split_plot":
+        wf, sf = params.get("whole_plot_factors") or {}, params.get("subplot_factors") or {}
+        if not wf or not sf: raise ValueError("split_plot needs whole_plot_factors and subplot_factors, each {name:[low,high]}")
+        reps = int(params.get("whole_plot_reps", 2)); wn, sn = list(wf), list(sf); WP = np.array(list(itertools.product([-1, 1], repeat=len(wn))), float); SP = np.array(list(itertools.product([-1, 1], repeat=len(sn))), float)
+        wp_runs = np.vstack([WP] * reps); order = rng.permutation(len(wp_runs)) if params.get("randomize", True) else np.arange(len(wp_runs)); rows_ = []
+        for pid, wi in enumerate(order, 1):
+            sp_order = rng.permutation(len(SP)) if params.get("randomize", True) else np.arange(len(SP))
+            for si in sp_order: rows_.append(list(wp_runs[wi]) + list(SP[si]) + [pid])
+        M = np.array(rows_); out = _decode(M[:, :-1], wn + sn, {**wf, **sf}); out.insert(0, "WholePlot", M[:, -1].astype(int))
+        res.table("Split-plot structure", pd.DataFrame([{"Whole-plot factors": ", ".join(wn), "Sub-plot factors": ", ".join(sn), "Whole plots": len(wp_runs), "Sub-plot runs per whole plot": len(SP), "Total runs": len(out)}]))
+        res.note("Split-plot: whole-plot factors (hard to change) are set once per whole plot, sub-plot factors are run in random order within each whole plot. Analyse with 'split_plot' (REML, random WholePlot): whole-plot effects are tested against whole-plot error. Replicate whole plots (whole_plot_reps >= 2) - otherwise the whole-plot error has no df.")
+        res.summary.update({"runs": len(out), "whole_plots": len(wp_runs)})
+    else: raise ValueError("type must be plackett_burman|dsd|d_optimal|taguchi|mixture|latin_square|split_plot")
+    if typ not in ("latin_square", "taguchi", "mixture", "split_plot") and params.get("randomize", True):
         idx = rng.permutation(len(out)); out = out.iloc[idx].reset_index(drop=True)
     if typ == "mixture" and params.get("randomize", True): out = out.sample(frac=1, random_state=int(params.get("seed", 1))).reset_index(drop=True)
     out.insert(0, "Run", np.arange(1, len(out) + 1)); out["Response"] = np.nan; path = f"{outdir}/design_{typ}.csv"; out.to_csv(path, index=False, encoding="utf-8-sig"); res.table("Design matrix", out); res.summary["design_csv"] = path

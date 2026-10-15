@@ -17,7 +17,7 @@
 ## Reliability
 | Need | analysis | Notes |
 |---|---|---|
-| Effect of covariates on time-to-event | `cox_ph` | Efron (default) or Breslow ties; HR with CI; LR/Wald/score; concordance; approximate PH check (rank-correlation of Schoenfeld residuals - not the full Grambsch-Therneau test). |
+| Effect of covariates on time-to-event | `cox_ph` | Efron (default) or Breslow ties; HR with CI; LR/Wald/score; concordance; Grambsch-Therneau PH test (per covariate and global, scaled Schoenfeld residuals vs g(t), plots; `ph_time` km/rank/log/identity). |
 | Repairable systems | `repairable` | Pooled power-law NHPP (Crow-AMSAA) MLE, Laplace trend test, Nelson MCF. β<1 improving, β>1 deteriorating. Assumes identical systems from age 0. |
 | Accelerated testing | `alt` | Weibull or lognormal with Arrhenius (stress in °C → Ea in eV), inverse power law, or linear relationship; common shape. Predicts B-life and acceleration factors at `use_stress`. Extrapolation is a model assumption - check per-stress fits first. |
 | Wear-out measurements | `degradation` | Per-unit linear/exponential path → pseudo failure time at `threshold` → life distribution (non-crossing units censored). Two-stage approximation. |

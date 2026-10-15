@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pandas as pd
 from ss_common import Lang, load_data, profile, finish
 import ss_desc, ss_linear, ss_spc, ss_rel, ss_doe
-import ss_stats2, ss_models2, ss_spc2, ss_rel2, ss_doe2, ss_graph
+import ss_ext, ss_ts2, ss_stats2, ss_models2, ss_spc2, ss_rel2, ss_doe2, ss_graph
 
 ANALYSES = {
     # descriptive / multivariate
@@ -68,7 +68,11 @@ ANALYSES = {
     "penalized": (ss_models2.penalized, "Ridge / Lasso / Elastic net with CV  [JMP Generalized Regression]"),
     "predictive": (ss_models2.predictive, "Decision tree, random forest, gradient boosting with CV  [JMP Partition/Bootstrap Forest/Boosted Tree | SPSS Decision Tree]"),
     "pls": (ss_models2.pls, "Partial least squares with VIP and CV  [JMP PLS]"),
-    "timeseries": (ss_models2.timeseries, "ACF/PACF, decomposition, Holt-Winters, ARIMA, auto-ARIMA, forecast  [JMP Time Series | SPSS Forecasting]"),
+    "glmm": (ss_ext.glmm, "Random-intercept GLMM (binomial/Poisson), adaptive Gauss-Hermite  [JMP Generalized Linear Mixed Model | SPSS GENLINMIXED]"),
+    "gage_rr_reml": (ss_ext.gage_rr_reml, "Gage R&R by REML: unbalanced data + fixed covariates  [JMP MSA / Variability Chart (REML)]"),
+    "split_plot": (ss_ext.split_plot_analyze, "Split-plot DOE analysis: whole-plot/sub-plot error strata, Satterthwaite df  [JMP Fit Model (Random Effect) | SPSS MIXED]"),
+    "stationarity": (ss_ts2.stationarity, "ADF unit-root + KPSS stationarity tests with verdict (differencing check before ARIMA)"),
+    "timeseries": (ss_models2.timeseries, "ACF/PACF, decomposition, Holt-Winters, exact-ML SARIMA, auto-ARIMA, forecast  [JMP Time Series | SPSS Forecasting]"),
     # ---- advanced SPC / MSA (ss_spc2)
     "ewma": (ss_spc2.ewma, "EWMA control chart  [JMP Control Chart Builder]"),
     "cusum": (ss_spc2.cusum, "Tabular CUSUM chart with shift estimate  [JMP CUSUM]"),
@@ -89,7 +93,7 @@ ANALYSES = {
     "life_interval": (ss_rel2.life_interval, "Interval/left/right-censored life data MLE  [JMP Life Distribution]"),
     "reliability_plan": (ss_rel2.reliability_plan, "Success-run and Weibayes demonstration test plans (no data)  [JMP Reliability Test Plan]"),
     # ---- advanced DOE (ss_doe2)
-    "doe_design2": (ss_doe2.make_design2, "Plackett-Burman, DSD, D-optimal, Taguchi, mixture, Latin square designs  [JMP DOE]"),
+    "doe_design2": (ss_doe2.make_design2, "Plackett-Burman, DSD, D-optimal, Taguchi, mixture, Latin square, split-plot designs  [JMP DOE]"),
     "doe_augment": (ss_doe2.doe_augment, "Foldover / axial / center-point augmentation  [JMP DOE Augment]"),
     "doe_power": (ss_doe2.doe_power, "Power & runs for two-level factorial effects (no data)  [JMP DOE Evaluate Design]"),
     "taguchi_analyze": (ss_doe2.taguchi_analyze, "Taguchi S/N response tables, ANOVA, predicted optimum  [JMP Taguchi]"),

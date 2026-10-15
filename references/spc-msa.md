@@ -19,7 +19,7 @@ Params: `part`, `operator`, `measurement`, `tolerance` (= USL−LSL, optional bu
 - Interaction kept if p < alpha_int, otherwise pooled into repeatability. Negative variance components are set to 0.
 - Outputs: ANOVA table, variance components (% contribution, σ, 6σ study var, % study var, % tolerance), ndc = ⌊1.41·σ_part/σ_GRR⌋, verdict, and a 6-panel report: components of variation, measurements by part/operator, part×operator interaction, box plots, range chart.
 - Guideline: %GRR < 10 % acceptable, 10–30 % marginal (depends on application/cost), > 30 % unacceptable; ndc ≥ 5. The selected parts must span the real process range — otherwise %Study Var and ndc are misleading. Prefer %Tolerance when the gauge is used for pass/fail decisions.
-- Related (see `spc-rel-extra.md`): `gage_nested` (destructive), `gage_type1`, `gage_linearity_bias`, `agreement` (attribute MSA). Not covered: expanded GRR with >2 random factors, GRR with covariates.
+- Related (see `spc-rel-extra.md`): `gage_nested` (destructive), `gage_type1`, `gage_linearity_bias`, `agreement` (attribute MSA). `gage_rr_reml` handles unbalanced data and fixed covariates. Not covered: expanded GRR with >2 random factors.
 
 Examples
 ```

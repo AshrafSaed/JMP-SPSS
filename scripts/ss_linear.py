@@ -13,11 +13,12 @@ from ss_common import Result, Lang, save_fig, PALETTE, numeric_cols
 # ----------------------------------------------------------------------------
 # Design matrix with effect (sum-to-zero) coding  -> Type III SS (SPSS/JMP default)
 # ----------------------------------------------------------------------------
-def _factor_cols(s: pd.Series, name: str):
+def _factor_cols(s: pd.Series, name: str, coding: str = "effect"):
+    """coding='effect' (sum-to-zero, JMP/Type III) or 'reference' (indicator, last level is the reference - SPSS parameter estimates)."""
     lv = sorted(s.dropna().unique(), key=str)
     cols, names = [], []
     for l in lv[:-1]:
-        cols.append(((s == l).astype(float) - (s == lv[-1]).astype(float)).values)
+        cols.append(((s == l).astype(float) - (s == lv[-1]).astype(float)).values if coding == "effect" else (s == l).astype(float).values)
         names.append(f"{name}[{l}]")
     return cols, names, lv
 
@@ -30,8 +31,8 @@ def build_terms(variables, degree):
 
 
 class OLS:
-    def __init__(self, df, y, factors=(), covariates=(), terms=None, degree=1, intercept=True):
-        self.y_name = y
+    def __init__(self, df, y, factors=(), covariates=(), terms=None, degree=1, intercept=True, coding="effect"):
+        self.y_name = y; self.coding = coding
         self.factors, self.covariates = list(factors), list(covariates)
         cols_needed = [y] + self.factors + self.covariates
         d = df[cols_needed].dropna().copy()
@@ -41,7 +42,7 @@ class OLS:
         self.terms = terms or build_terms(self.factors + self.covariates, degree)
         base = {}
         for f in self.factors:
-            c, n, lv = _factor_cols(d[f], f)
+            c, n, lv = _factor_cols(d[f], f, coding)
             base[f] = (c, n)
         for v in self.covariates:
             base[v] = ([d[v].values.astype(float)], [v])
@@ -113,6 +114,7 @@ class OLS:
                              "Lower 95%": self.beta - tc * self.se, "Upper 95%": self.beta + tc * self.se})
 
     def predict_df(self, newdf):
+        if self.coding != "effect": raise NotImplementedError("predict_df requires effect coding")
         d = newdf.copy()
         # rebuild using same coding
         cols = []
@@ -163,6 +165,12 @@ def _diag_plots(m: OLS, L: Lang, outdir, prefix):
 def _fit_summary(m: OLS, L: Lang):
     return pd.DataFrame([{L.t("R-squared"): m.r2, L.t("Adj R-squared"): m.adj_r2, L.t("RMSE"): np.sqrt(m.mse),
                           L.t("Mean"): m.yv.mean(), L.t("Observations"): m.n}])
+
+
+def _ptab(m, params, data, y, fa):
+    """Parameter table in the requested coding. 'effect' (default) = JMP; 'reference' = SPSS indicator coding (last level is the reference). Tests/SS always use effect coding."""
+    if params.get("coding") != "reference": return m.params_table()
+    mr = OLS(data, y, m.factors, m.covariates, terms=m.terms, coding="reference"); return mr.params_table()
 
 
 def _tr_cols(df, L):
@@ -246,7 +254,7 @@ def glm_anova(df, params, L: Lang, outdir):
     res.table(L.t("Summary of Fit"), _tr_cols(_fit_summary(m, L), L))
     res.table(L.t("Analysis of Variance"), _tr_cols(m.anova_table(), L))
     res.table(f"{L.t('Effect Tests')} ({L.t('Type III SS')})", _tr_cols(m.ss3(), L))
-    res.table(L.t("Parameter Estimates"), _tr_cols(m.params_table(), L))
+    res.table(L.t("Parameter Estimates") + (" (reference coding, last level = reference)" if params.get("coding") == "reference" else ""), _tr_cols(_ptab(m, params, m.d, y, fa), L))
     for f_ in fa:
         ls = m.lsmeans(f_)
         res.table(f"LS Means - {f_}", pd.DataFrame(ls, columns=[L.t("Level"), "LS Mean"]))
@@ -311,7 +319,7 @@ def regression(df, params, L: Lang, outdir):
     res = Result(f"{L.t('Model')}: {y}")
     res.table(L.t("Summary of Fit"), _tr_cols(_fit_summary(m, L), L))
     res.table(L.t("Analysis of Variance"), _tr_cols(m.anova_table(), L))
-    res.table(L.t("Parameter Estimates"), _tr_cols(m.params_table(), L))
+    res.table(L.t("Parameter Estimates") + (" (reference coding, last level = reference)" if params.get("coding") == "reference" else ""), _tr_cols(_ptab(m, params, m.d, y, fa), L))
     res.table(L.t("Effect Tests"), _tr_cols(m.ss3(), L))
     if len(m.covariates) > 1:
         Xc = m.d[m.covariates]
@@ -361,7 +369,7 @@ def glm(df, params, L: Lang, outdir):
     else:
         yv = d[y].values.astype(float)
     d["_y"] = yv
-    base = OLS(d, "_y", fa, xs, degree=1)
+    base = OLS(d, "_y", fa, xs, degree=1, coding=params.get("coding", "effect"))
     X = base.X
     beta = np.zeros(X.shape[1])
     for _ in range(100):

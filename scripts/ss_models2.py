@@ -86,7 +86,41 @@ class REML:
             C = np.linalg.inv(H); se = np.sqrt(np.where(np.diag(C) > 0, np.diag(C), np.nan))
         except np.linalg.LinAlgError: se = np.full(m, np.nan)
         se[:-1][self.v[:-1] < 1e-8 * yv] = np.nan; self.se_v = se
-        self.cov_v = C if 'C' in dir() else None
+        self.H, self.hstep, self.yv = H, h, yv
+        free = np.ones(m, bool); free[:-1] = self.v[:-1] > 1e-8 * yv; self.free = free      # components on the boundary are held fixed
+        try: A = np.zeros((m, m)); A[np.ix_(free, free)] = np.linalg.inv(H[np.ix_(free, free)]); self.A = A
+        except np.linalg.LinAlgError: self.A = None
+        self.cov_v = self.A
+
+    def cov_beta_at(self, v):
+        V = self._V(v); Vi = np.linalg.inv(V); return np.linalg.inv(self.X.T @ Vi @ self.X)
+
+    def _sat_one(self, l):
+        """Satterthwaite df for the variance of one linear function l'beta: nu = 2 var^2 / (g' A g), g = d var / d v (numerical)."""
+        var = float(l @ self.cov_b @ l)
+        if self.A is None or var <= 0: return var, np.nan
+        g = np.zeros(len(self.v))
+        for k in np.where(self.free)[0]:
+            hk = self.hstep[k]; vp, vm = self.v.copy(), self.v.copy(); vp[k] += hk; vm[k] = max(vm[k] - hk, 1e-12)
+            g[k] = (float(l @ self.cov_beta_at(vp) @ l) - float(l @ self.cov_beta_at(vm) @ l)) / (vp[k] - vm[k])
+        den = float(g @ self.A @ g)
+        return var, (2 * var * var / den if den > 1e-300 else np.inf)
+
+    def contrast_test(self, Lm):
+        """F test of H0: Lm beta = 0 with Satterthwaite denominator df (Fai-Cornelius style for >1 df).
+        Returns F, num df, den df, p."""
+        Lm = np.atleast_2d(np.asarray(Lm, float)); q = np.linalg.matrix_rank(Lm); Lb = Lm @ self.beta; S = Lm @ self.cov_b @ Lm.T
+        if q == 1 and Lm.shape[0] == 1:
+            var, nu = self._sat_one(Lm[0]); F = float(Lb[0] ** 2 / var); return F, 1, nu, (stats.f.sf(F, 1, nu) if np.isfinite(nu) else stats.chi2.sf(F, 1))
+        D, P = np.linalg.eigh(S); keep = D > 1e-12 * D.max(); D, P = D[keep], P[:, keep]; q = len(D)
+        t2 = 0.0; nus = []
+        for mth in range(q):
+            l = P[:, mth] @ Lm; _, nu = self._sat_one(l); nus.append(nu); t2 += float((l @ self.beta) ** 2 / D[mth])
+        F = t2 / q; nus = np.array(nus)
+        if not np.all(np.isfinite(nus)): nu = np.inf if np.all(np.isinf(nus)) else float(np.nanmin(nus))
+        elif np.all(nus > 2): E = float(np.sum(nus / (nus - 2))); nu = 2 * E / (E - q) if E > q else float(nus.min())
+        else: nu = float(nus.min())
+        return F, q, nu, (stats.f.sf(F, q, nu) if np.isfinite(nu) else stats.chi2.sf(F * q, q))
 
 
 def mixed(df, params, L: Lang, outdir):
@@ -107,14 +141,19 @@ def mixed(df, params, L: Lang, outdir):
     vrows.append({"Random effect": "Residual", "Levels": len(d), "Variance component": m.v[-1], "Std Dev": math.sqrt(m.v[-1]), "% of total": 100 * m.v[-1] / tot, "Std Error (approx.)": m.se_v[-1]})
     vrows.append({"Random effect": "Total", "Levels": len(d), "Variance component": tot, "Std Dev": math.sqrt(tot), "% of total": 100.0, "Std Error (approx.)": np.nan})
     res.table("Variance components (REML)", pd.DataFrame(vrows))
-    se = np.sqrt(np.diag(m.cov_b)); z = m.beta / se
-    res.table("Fixed effects (Wald z)", pd.DataFrame({"Term": names, "Estimate": m.beta, "Std Error": se, "z": z, "p-value (Wald, large-sample)": 2 * stats.norm.sf(abs(z))}))
-    # Wald chi-square tests per term
+    se = np.sqrt(np.diag(m.cov_b)); dfm_ = (params.get("df_method") or "satterthwaite").lower(); sat = dfm_ != "wald"
+    dfs = np.array([m._sat_one(np.eye(len(m.beta))[i])[1] for i in range(len(m.beta))]) if sat else np.full(len(m.beta), np.inf)
+    tv = m.beta / se; pv = np.array([2 * (stats.t.sf(abs(a), b) if np.isfinite(b) else stats.norm.sf(abs(a))) for a, b in zip(tv, dfs)])
+    res.table("Fixed effects (t, Satterthwaite df)" if sat else "Fixed effects (Wald z)", pd.DataFrame({"Term": names, "Estimate": m.beta, "Std Error": se, "DF": dfs, "t": tv, "p-value": pv}))
     if fixed:
         rows = []
         for t, idx in o.term_idx.items():
-            b = m.beta[idx]; C = m.cov_b[np.ix_(idx, idx)]; w = float(b @ np.linalg.solve(C, b)); rows.append({"Source": "*".join(t), "DF": len(idx), "Wald chi-square": w, "p-value": stats.chi2.sf(w, len(idx))})
-        res.table("Fixed-effect tests (Wald chi-square)", pd.DataFrame(rows))
+            Lm = np.zeros((len(idx), len(m.beta))); Lm[np.arange(len(idx)), idx] = 1
+            F, q_, nu, p_ = m.contrast_test(Lm) if sat else (None, len(idx), np.inf, None)
+            b = m.beta[idx]; C = m.cov_b[np.ix_(idx, idx)]; w = float(b @ np.linalg.solve(C, b))
+            if not sat: F = w / len(idx); p_ = stats.chi2.sf(w, len(idx))
+            rows.append({"Source": "*".join(t), "Num DF": q_, "Den DF (Satterthwaite)" if sat else "Den DF": nu, "F": F, "p-value": p_, "Wald chi-square (large-sample)": w, "Wald p": stats.chi2.sf(w, len(idx))})
+        res.table("Fixed-effect tests (F, Satterthwaite df)" if sat else "Fixed-effect tests (Wald chi-square)", pd.DataFrame(rows)); res.summary["fixed_tests"] = {r["Source"]: {"F": float(r["F"]), "df2": float(r[[k for k in r if k.startswith("Den DF")][0]]), "p": float(r["p-value"])} for r in rows}
     k_par = len(m.v) + X.shape[1]
     res.table("Fit", pd.DataFrame([{"-2 REML log-lik": 2 * m.neg_reml, "n": len(d), "Fixed params": X.shape[1], "Variance params": len(m.v), "AIC (REML, comparable only for same fixed effects)": 2 * m.neg_reml + 2 * len(m.v)}]))
     fig, axs = plt.subplots(1, 3, figsize=(13, 3.8))
@@ -124,7 +163,7 @@ def mixed(df, params, L: Lang, outdir):
         u = m.u[0]; o2 = np.argsort(u); axs[2].plot(u[o2], range(len(u)), "o", ms=3); axs[2].set_yticks([]); axs[2].set_title(f"BLUP: {rand[0]}")
     res.fig("mixed model diagnostics", save_fig(fig, outdir, "mixed"))
     res.summary.update({"variance_components": {t: float(s) for t, s in zip(rand + ["Residual"], m.v)}, "neg2_reml": float(2 * m.neg_reml)})
-    res.note("Variance components by REML (boundary at zero allowed). Fixed-effect p-values are large-sample Wald tests; they are optimistic for small designs (JMP/SPSS use Satterthwaite/Kenward-Roger df - not implemented).")
+    res.note("Variance components by REML (boundary at zero allowed). Fixed-effect t/F tests use Satterthwaite denominator df (multi-df terms: Fai-Cornelius approximation); Kenward-Roger's small-sample covariance adjustment is NOT applied, so with very few random-effect levels p-values can be slightly optimistic. Set df_method='wald' for large-sample Wald tests.")
     return res
 
 
@@ -505,7 +544,7 @@ def _hw(y, m, trend, seasonal, par):
 
 
 def timeseries(df, params, L: Lang, outdir):
-    """column; mode: explore|decompose|smooth|arima|auto_arima; period (m); horizon; p,d,q,D; trend (bool), seasonal add|mul|none (smooth)."""
+    """column; mode: explore|decompose|smooth|arima|auto_arima; period (m); horizon; p,d,q and seasonal P,D,Q (arima); method ml (exact Kalman ML, default) | css; trend (bool), seasonal add|mul|none (smooth)."""
     col = params["column"]; y = df[col].dropna().values.astype(float); n = len(y); mode = params.get("mode", "explore"); m = int(params.get("period", 1)); h = int(params.get("horizon", 12)); res = Result(L.t("Time series"))
     nl = int(params.get("nlags", min(40, n // 3)))
     if mode == "explore":
@@ -548,22 +587,32 @@ def timeseries(df, params, L: Lang, outdir):
         fig, ax = plt.subplots(figsize=(8, 3.8)); ax.plot(range(n), y, label="data"); ax.plot(range(n), fit, label="fit", alpha=.7); ax.plot(range(n, n + h), fc, color=PALETTE[3], label="forecast"); ax.fill_between(range(n, n + h), lo, hi, color=PALETTE[3], alpha=.2); ax.legend(); ax.set_title(L.fig("Forecast"))
         res.fig("smoothing forecast", save_fig(fig, outdir, "ts_smooth")); res.summary.update({"alpha": float(best.x[0]), "rmse": math.sqrt(sse / n)}); res.note("Prediction intervals by residual bootstrap simulation (1000 paths).")
     else:
-        D = int(params.get("D", 0))
+        D = int(params.get("D", 0)); meth = (params.get("method") or "ml").lower(); P_, Q_ = int(params.get("P", 0)), int(params.get("Q", 0))
+        if meth == "ml": from ss_ts2 import sarima_ml
+        def _fit(p_, d_, q_):
+            return sarima_ml(y, p_, d_, q_, P_, D, Q_, m) if meth == "ml" else arima_fit(y, p_, d_, q_, D, m)
         if mode == "auto_arima":
             d_ = int(params.get("d", 0)); cands = []
             for p_, q_ in itertools.product(range(4), range(4)):
-                try: cands.append((arima_fit(y, p_, d_, q_, D, m)["aicc"], p_, q_))
+                try: cands.append((_fit(p_, d_, q_)["aicc"], p_, q_))
                 except Exception: pass
             _, p, q = min(cands); d = d_
             res.table("Model search (AICc)", pd.DataFrame(sorted(cands), columns=["AICc", "p", "q"]).head(10))
         else: p, d, q = int(params.get("p", 1)), int(params.get("d", 0)), int(params.get("q", 0))
-        f = arima_fit(y, p, d, q, D, m); fc, se = arima_forecast(f, h); e = f["resid"]; lb = ljung_box(e, min(10, len(e) // 5), p + q)
-        names = [f"AR{i+1}" for i in range(p)] + [f"MA{j+1}" for j in range(q)] + (["Mean"] if f["with_mean"] else []); vals = list(f["phi"]) + list(f["theta"]) + ([f["mu"]] if f["with_mean"] else [])
-        res.table(f"ARIMA({p},{d},{q})" + (f"({D}) period {m}" if D else "") + " - conditional least squares", pd.DataFrame({"Parameter": names, "Estimate": vals}) if names else pd.DataFrame({"Parameter": ["(none)"], "Estimate": [np.nan]}))
-        res.table("Fit", pd.DataFrame([{"Sigma^2": f["sigma2"], "RMSE": math.sqrt(f["sigma2"]), "AIC (CSS-based)": f["aic"], "AICc": f["aicc"], "Ljung-Box Q": lb[0], "Ljung-Box p": lb[1], "n used": f["n"]}]))
+        f = _fit(p, d, q); fc, se = arima_forecast(f, h); e = f["resid"]; lb = ljung_box(f.get("std_resid", e), min(10, len(e) // 5), p + q + P_ + Q_)
+        if meth == "ml":
+            names, vals, ses = f["names"], list(f["native"]), list(f["native_se"])
+            tab = pd.DataFrame({"Parameter": names, "Estimate": vals, "Std Error": ses, "z": np.array(vals) / np.array(ses), "p-value": 2 * stats.norm.sf(np.abs(np.array(vals) / np.array(ses)))}) if names else pd.DataFrame({"Parameter": ["(none)"], "Estimate": [np.nan]})
+            lab = f"SARIMA({p},{d},{q})({P_},{D},{Q_}) period {m}" if (P_ or Q_ or D) and m > 1 else f"ARIMA({p},{d},{q})"
+            res.table(lab + " - exact Gaussian maximum likelihood", tab)
+            res.table("Fit", pd.DataFrame([{"Sigma^2": f["sigma2"], "RMSE": math.sqrt(f["sigma2"]), "-2 log-lik": -2 * f["loglik"], "AIC": f["aic"], "AICc": f["aicc"], "Ljung-Box Q": lb[0], "Ljung-Box p": lb[1], "n used": f["n"]}]))
+        else:
+            names = [f"AR{i+1}" for i in range(p)] + [f"MA{j+1}" for j in range(q)] + (["Mean"] if f["with_mean"] else []); vals = list(f["phi"]) + list(f["theta"]) + ([f["mu"]] if f["with_mean"] else [])
+            res.table(f"ARIMA({p},{d},{q})" + (f"({D}) period {m}" if D else "") + " - conditional least squares", pd.DataFrame({"Parameter": names, "Estimate": vals}) if names else pd.DataFrame({"Parameter": ["(none)"], "Estimate": [np.nan]}))
+            res.table("Fit", pd.DataFrame([{"Sigma^2": f["sigma2"], "RMSE": math.sqrt(f["sigma2"]), "AIC (CSS-based)": f["aic"], "AICc": f["aicc"], "Ljung-Box Q": lb[0], "Ljung-Box p": lb[1], "n used": f["n"]}]))
         res.table("Forecast", pd.DataFrame({"Step": range(1, h + 1), "Forecast": fc, "Lower 95%": fc - 1.96 * se, "Upper 95%": fc + 1.96 * se}))
         fig, axs = plt.subplots(2, 1, figsize=(8, 7)); axs[0].plot(range(n), y); axs[0].plot(range(n, n + h), fc, color=PALETTE[3]); axs[0].fill_between(range(n, n + h), fc - 1.96 * se, fc + 1.96 * se, color=PALETTE[3], alpha=.2); axs[0].set_title(L.fig("Forecast"))
         ra = acf(e, min(30, len(e) // 3)); axs[1].bar(range(len(ra)), ra, width=.3); b_ = 1.96 / math.sqrt(len(e)); axs[1].axhline(b_, color=PALETTE[3], ls="--"); axs[1].axhline(-b_, color=PALETTE[3], ls="--"); axs[1].set_title("Residual ACF")
         res.fig("ARIMA forecast", save_fig(fig, outdir, "ts_arima")); res.summary.update({"phi": [float(v) for v in f["phi"]], "theta": [float(v) for v in f["theta"]], "mu": float(f["mu"]), "sigma2": float(f["sigma2"]), "forecast": [float(v) for v in fc]})
-        res.note("ARIMA estimated by conditional least squares (not exact ML); intervals assume Gaussian innovations and correct model order.")
+        res.note(("Exact Gaussian ML (Kalman filter), multiplicative seasonal terms supported (P, Q, D, period m); " if meth == "ml" else "Conditional least squares (method='css'; no seasonal AR/MA terms); ") + "forecast intervals assume Gaussian innovations and the correct model order, and use the CSS-style residual recursion for the starting innovations.")
     return res

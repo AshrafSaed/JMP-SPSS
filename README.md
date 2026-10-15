@@ -4,7 +4,7 @@
 
 **English:** A Claude Skill that reproduces JMP- and SPSS-style industrial-statistics analyses in pure Python (no licences). It asks for parameters, runs the analysis, checks assumptions, and delivers a Word report + PNG graphs, in Hebrew or English chosen per analysis.
 
-- 71 analyses in 12 areas, one master `SKILL.md` + module docs.
+- 75 analyses in 12 areas, one master `SKILL.md` + module docs.
 - Stack: numpy, scipy, pandas, matplotlib, python-docx, scikit-learn (`pyreadstat` only for `.sav`). No statsmodels.
 - Engineering & Development: Ashraf Saed | MIGATRONIX – Automation & Control Solutions
 
@@ -16,16 +16,16 @@
 |---|---|---|
 | תיאורי ורב-משתני / Descriptive | `distribution`, `tabulate`, `correlation`, `partial_corr`, `crosstab`, `pca`, `cluster` | Distribution, Multivariate, PCA, Cluster / Explore, Correlate, Crosstabs, Factor |
 | השוואת ממוצעים ודרגות / Comparisons | `ttest`, `nonparametric` (Mann-Whitney, Wilcoxon, Kruskal+Dunn, Friedman, sign, McNemar, median, runs), `equivalence` (TOST), `variance_test`, `proportion`, `multiple_testing` | Fit Y by X, Equivalence / Compare Means, Nonparametric |
-| משפחת ANOVA / ANOVA family | `oneway`, `anova`, `rm_anova` (Mauchly, GG/HF), `manova`, `mixed` (REML), `nested_anova` | Fit Model, Variance Components / GLM, MIXED, VARCOMP |
-| רגרסיה ו-GLM / Regression & GLM | `regression`, `glm`, `ordinal`, `multinomial`, `nonlinear`, `penalized` (LASSO/Ridge/ENet), `power` | Fit Model, Fit Curve, Generalized Regression / Linear, Logistic, PLUM, NOMREG, NLR |
+| משפחת ANOVA / ANOVA family | `oneway`, `anova`, `rm_anova` (Mauchly, GG/HF), `manova` (multi-factor, MANCOVA), `mixed` (REML + Satterthwaite df), `nested_anova`, `split_plot` | Fit Model, Variance Components / GLM, MIXED, VARCOMP |
+| רגרסיה ו-GLM / Regression & GLM | `regression`, `glm`, `glmm`, `ordinal`, `multinomial`, `nonlinear`, `penalized` (LASSO/Ridge/ENet), `power` | Fit Model, Fit Curve, Generalized Regression / Linear, Logistic, PLUM, NOMREG, NLR |
 | רב-משתני וחיזוי / Multivariate & ML | `factor_analysis` (KMO, Bartlett, varimax), `discriminant` (LDA/QDA), `predictive` (tree, forest, boosting), `pls` (VIP) | Factor, Discriminant, Partition, PLS |
-| סדרות עתיות / Time series | `timeseries` (ACF/PACF, ARIMA, Holt-Winters) | Time Series / Forecasting |
+| סדרות עתיות / Time series | `timeseries` (ACF/PACF, exact-ML SARIMA, auto-ARIMA, Holt-Winters), `stationarity` (ADF + KPSS) | Time Series / Forecasting |
 | התפלגויות וחריגים / Distributions & outliers | `transform` (Box-Cox, Yeo-Johnson), `tolerance`, `outliers` (Grubbs, ESD), `bootstrap` | Distribution, Explore Outliers |
 | הסכמה ואמינות מדידה / Agreement | `agreement` (kappa, Fleiss, attribute), `icc`, `cronbach`, `bland_altman` | Attribute Gauge / Reliability, Kappa |
 | בקרת תהליכים / SPC | `control_chart`, `ewma`, `cusum`, `laney`, `run_chart`, `pareto`, `hotelling_t2`, `sampling_plan` | Control Chart Builder / Control Charts |
-| יכולת ו-MSA / Capability & MSA | `capability` (Cp/Cpk/Pp/Ppk), `gage_rr`, `gage_type1`, `gage_linearity_bias`, `gage_nested`, `variability_chart` | Process Capability, MSA |
-| אמינות / Reliability | `life_distribution`, `life_interval`, `survival` (Kaplan-Meier), `cox_ph`, `repairable` (Crow-AMSAA, Nelson MCF), `alt` (Arrhenius/power), `degradation`, `reliability_plan` (Weibayes, success-run) | Life Distribution, Survival, Fit Life by X, Reliability Growth |
-| תכנון ניסויים / DOE | `doe_design` (full/fractional/CCD/Box-Behnken), `doe_design2` (DSD, Plackett-Burman, D-optimal, Taguchi, mixture, Latin square), `doe_augment`, `doe_power`, `doe_analyze`, `taguchi_analyze`, `mixture_analyze`, `doe_optimize` (desirability + profiler) | DOE, Prediction Profiler |
+| יכולת ו-MSA / Capability & MSA | `capability` (Cp/Cpk/Pp/Ppk), `gage_rr`, `gage_rr_reml`, `gage_type1`, `gage_linearity_bias`, `gage_nested`, `variability_chart` | Process Capability, MSA |
+| אמינות / Reliability | `life_distribution`, `life_interval`, `survival` (Kaplan-Meier), `cox_ph` (+ Grambsch-Therneau PH test), `repairable` (Crow-AMSAA, Nelson MCF), `alt` (Arrhenius/power), `degradation`, `reliability_plan` (Weibayes, success-run) | Life Distribution, Survival, Fit Life by X, Reliability Growth |
+| תכנון ניסויים / DOE | `doe_design` (full/fractional/CCD/Box-Behnken), `doe_design2` (DSD, Plackett-Burman, D-optimal, Taguchi, mixture, Latin square, split-plot), `doe_augment`, `doe_power`, `doe_analyze`, `taguchi_analyze`, `mixture_analyze`, `doe_optimize` (desirability + profiler) | DOE, Prediction Profiler |
 | גרפים / Graphs | `graph` (scatter, line, bar, box, violin, histogram, density, heatmap, bubble, pairs, area, pie), `auto_xy` | Graph Builder, Fit Y by X / Chart Builder |
 
 הרשימה המלאה עם כל הפרמטרים של כל ניתוח: [`references/catalog.md`](references/catalog.md). מסמכי המודולים: `references/*.md`.
@@ -50,18 +50,23 @@ python scripts/run.py capability --data data.csv --params '{"column":"x","lsl":9
 
 ## אימות / Verification
 
-שתי חבילות בדיקה: `tests/run_tests.py` (59 בדיקות) ו-`tests/run_tests2.py` (237 בדיקות). הן משוות ל-scipy / sklearn, לצורות סגורות, לערכים מפורסמים (ICC של Shrout-Fleiss, Fleiss kappa, Grubbs, גדלי מדגם success-run), לסימולציה ולזהויות בין שיטות (Cox score = log-rank, REML = ANOVA, עוצמת DOE מול Monte-Carlo), ומריצות כל ניתוח בעברית ובאנגלית. כל הבדיקות עוברות.
+שלוש חבילות בדיקה: `tests/run_tests.py` (59), `tests/run_tests2.py` (237) ו-`tests/run_tests3.py` (63) - סה"כ 359 בדיקות. הן משוות ל-scipy / sklearn, לצורות סגורות, לערכים מפורסמים (ICC של Shrout-Fleiss, Fleiss kappa, Grubbs, גדלי מדגם success-run), לסימולציה ולזהויות בין שיטות (Cox score = log-rank, REML = ANOVA, עוצמת DOE מול Monte-Carlo), ומריצות כל ניתוח בעברית ובאנגלית. כל הבדיקות עוברות.
 
 ```
 python tests/run_tests.py out1
 python tests/run_tests2.py out2      # ~6 דקות
+python tests/run_tests3.py out3      # ~3 דקות
 ```
 
 ## מגבלות / Limitations
 
-- קבצי `.jmp` לא נקראים ישירות: יש לייצא ל-Excel/CSV. `.sav` דורש `pyreadstat`.
-- מבחני fixed effects במודל מעורב הם Wald למדגם גדול (ללא Satterthwaite / Kenward-Roger).
-- ARIMA ב-CSS (לא ML מדויק); אין מבחני ADF/KPSS; בדיקת PH ב-Cox מקורבת.
-- לא כלולים: Split-plot DOE, GLMM, MANOVA עם כמה גורמים, Gage R&R עם משתני עזר, סקרים מורכבים.
-- הבדלים קטנים מול JMP/SPSS אפשריים (קידוד אפקטים מול reference-cell, רווחי סמך Wald, שיטות df).
-- ספי הערכה (Cpk ≥ 1.33, %GRR, ndc ≥ 5 וכו') הם מוסכמות ולא תקנים. אין להסיק מהפלט עמידה ב-ISO/AIAG; מפרט הלקוח קובע.
+מה שתוקן לאחרונה (פירוט ואימות ב-[`references/limits-fixes.md`](references/limits-fixes.md)): בדיקות F/t במודל מעורב עם df של Satterthwaite; ARIMA/SARIMA בנראות מקסימלית מדויקת; ADF ו-KPSS; בדיקת PH של Grambsch-Therneau; MANOVA רב-גורמי ו-MANCOVA; GLMM עם חותך אקראי; Gage R&R ב-REML (נתונים לא מאוזנים ומשתני עזר); ניתוח ותכנון Split-plot; קידוד reference בסגנון SPSS (`"coding": "reference"`).
+
+מה שנשאר, בכנות:
+- קבצי `.jmp` לא נקראים ישירות (פורמט סגור): יש לייצא ל-Excel/CSV. `.sav` דורש `pip install pyreadstat` במחשב שלך.
+- Satterthwaite ולא Kenward-Roger: עם מעט רמות של אפקט אקראי, ערכי p עלולים להיות אופטימיים מעט.
+- GLMM: חותך אקראי יחיד (binomial / Poisson), בלי שיפועים אקראיים או אפקטים חוצים.
+- Split-plot: תכנון 2-רמות מלא (whole-plot x sub-plot) בלבד; אין תכנוני split-split-plot או שברים.
+- לא כלולים: סקרים מורכבים, MANOVA עם גורמים אקראיים, ARIMA עם רגרסורים חיצוניים, סיכונים מתחרים ו-frailty.
+- הבדלים קטנים מול JMP/SPSS אפשריים (למשל p של ADF הוא Monte-Carlo, לא משטח MacKinnon).
+- ספי הערכה (Cpk ≥ 1.33, %GRR, ndc ≥ 5 וכו') הם מוסכמות ולא תקנים, ולכן נשארו כהנחיה בלבד: אין להסיק מהפלט עמידה ב-ISO/AIAG; מפרט הלקוח קובע.

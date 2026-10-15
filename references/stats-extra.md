@@ -8,7 +8,7 @@ Exact `--params` keys: `catalog.md`. Notes below = when to use, assumptions, how
 | Equal variances | `variance_test` | Levene/Brown-Forsythe are robust; Bartlett assumes normality. Use before choosing pooled vs Welch. |
 | "Not different" claim | `equivalence` (TOST) | The margins (`low`,`high`) are an engineering decision - never default them. Non-significant t-test ≠ equivalence. |
 | Same subjects, ≥3 conditions | `rm_anova` | Wide format (one row per subject). Check Mauchly; if sphericity violated use the Greenhouse-Geisser row. No between-subject factor (use `mixed` for that). |
-| Several responses, one factor | `manova` | Wilks/Pillai/HL/Roy. Pillai is most robust to violations; Roy's p is an upper bound. Needs n ≫ number of responses. |
+| Several responses, one or more factors / covariates | `manova` (`factor` for one-way; `factors`, `covariates`, `degree` for multi-factor / MANCOVA with Type III tests per effect) | Wilks/Pillai/HL/Roy. Pillai is most robust to violations; Roy's p is an upper bound. Needs n ≫ number of responses. |
 | Rater/appraiser agreement | `agreement` (`kappa`, `fleiss`, `attribute`) | Attribute mode = within appraiser, vs standard, between appraisers, miss/false-alarm. Kappa depends on prevalence; report % agreement too. |
 | Continuous rater agreement | `icc`, `bland_altman` | Choose the ICC form that matches the design (1 = different raters per target, 2 = random raters absolute agreement, 3 = fixed raters consistency). Bland-Altman: judge limits of agreement against what is clinically/engineering acceptable. |
 | Questionnaire/item reliability | `cronbach` | alpha ≥ 0.7 is a convention. High alpha ≠ unidimensional. |

@@ -68,7 +68,7 @@ a_, n_ = 12, 6; g = np.repeat(range(a_), n_); u = rng.normal(0, 2, a_); y = 10 +
 rmx = M2.mixed(dfm, {"response": "y", "random": ["g"]}, L, O("mix")); gm = dfm.groupby("g").y.mean(); msb = n_ * ((gm - y.mean()) ** 2).sum() / (a_ - 1); msw = ((dfm.y - dfm.g.map(gm)) ** 2).sum() / (a_ * (n_ - 1))
 check("REML variance components == ANOVA estimates (balanced one-way)", abs(rmx.summary["variance_components"]["g"] - (msb - msw) / n_) < 1e-3 and abs(rmx.summary["variance_components"]["Residual"] - msw) < 1e-3, str({k: round(v, 4) for k, v in rmx.summary["variance_components"].items()}) + f" vs {(msb-msw)/n_:.4f},{msw:.4f}")
 blk = np.repeat(range(10), 3); trt = np.tile(list("ABC"), 10); yb = 5 + rng.normal(0, 1.5, 10)[blk] + np.tile([0, 1, 2.5], 10) + rng.normal(0, .5, 30); dfb = pd.DataFrame({"y": yb, "trt": trt, "blk": blk.astype(str)})
-rmb = M2.mixed(dfb, {"response": "y", "fixed": ["trt"], "random": ["blk"]}, L, O("rcbd")); ols_ = ss_linear.OLS(dfb, "y", factors=["trt"]); fx = T(rmb, "Fixed effects (Wald")
+rmb = M2.mixed(dfb, {"response": "y", "fixed": ["trt"], "random": ["blk"]}, L, O("rcbd")); ols_ = ss_linear.OLS(dfb, "y", factors=["trt"]); fx = T(rmb, "Fixed effects (")
 check("Mixed fixed effects == OLS in balanced RCBD", np.allclose(fx["Estimate"].values, ols_.beta, atol=1e-5))
 # nested 3-level balanced closed form
 A_, B_, R_ = 4, 3, 5; ya = rng.normal(0, 3, A_); yb2 = rng.normal(0, 2, (A_, B_)); rows = [{"A": f"a{i}", "B": f"b{i}{j}", "y": 20 + ya[i] + yb2[i, j] + rng.normal(0, 1)} for i in range(A_) for j in range(B_) for _ in range(R_)]
